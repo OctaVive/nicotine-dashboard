@@ -27,23 +27,56 @@ docker compose up -d
 1. Copy `plugin/nicotine_upload_geo/` into your Nicotine+ plugins directory (`~/.local/share/nicotine/plugins/` on Linux).
 2. Enable the plugin in Nicotine+.
 3. Configure plugin settings:
-   - `db_host`, `db_port`, `db_name`, `db_user`, `db_password`
-   - Optional: `geoip_mmdb_path`
+   - Required DB: `db_host`, `db_port`, `db_name`, `db_user`, `db_password`
+   - Optional geo: `geoip_mmdb_path`, `geoip_online_url_template`, `geoip_online_timeout_seconds`
 
-## 3) Country logic
+## 3) Plugin dependencies
+
+Install dependencies in the Python environment Nicotine+ uses:
+
+- `psycopg[binary]` or `psycopg2` (required for PostgreSQL inserts)
+- `geoip2` (optional, only for local GeoLite2 lookups)
+
+If PostgreSQL driver is missing, plugin logs will show:
+
+- `Install psycopg or psycopg2 to enable PostgreSQL writes`
+
+## 4) Upload/IP/Country flow
 
 The plugin uses:
 
-1. Country from Nicotine+ metadata (preferred)
-2. Fallback to GeoLite2 by IP when metadata is unavailable
-3. Unknown country if neither source is available
+1. `upload_finished_notification(user, virtual_path, real_path)` to detect completed uploads
+2. `user_resolve_notification(user, ip_address, port, country)` to cache peer IP/country hints
+3. Country resolution priority:
+   - local GeoLite2 from peer IP
+   - online IP lookup API
+   - Nicotine metadata fallback
+   - unknown
 
-To enable fallback geolocation:
+To enable local GeoLite2 lookup:
 
 - Download MaxMind GeoLite2 Country database
 - Set plugin `geoip_mmdb_path` to the `.mmdb` file path
 
-## 4) Grafana setup
+Default online lookup endpoint:
+
+- `https://ipwho.is/{ip}`
+
+## 5) Validate ingestion quickly
+
+```bash
+docker compose exec postgres psql -U nicotine -d nicotine -c "SELECT COUNT(*) FROM download_events;"
+docker compose exec postgres psql -U nicotine -d nicotine -c "SELECT occurred_at, peer_username, peer_ip, country_code, country_name FROM download_events ORDER BY occurred_at DESC LIMIT 20;"
+```
+
+If table is missing (usually from an old volume before init script existed):
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+## 6) Grafana setup
 
 1. Add a PostgreSQL datasource in Grafana pointing to this DB.
 2. Use SQL examples from `queries/grafana_map_queries.sql`.
