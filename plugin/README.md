@@ -33,9 +33,26 @@ Configure in Nicotine+ plugin settings:
 
 ## Dependencies
 
-Install Python packages in the environment Nicotine+ uses:
+The plugin **requires `psycopg2`** (the PostgreSQL adapter) in the **same Python environment as Nicotine+**, or alternatively **`psycopg`** v3 with the binary extra. Without it, PostgreSQL writes are disabled.
 
-- `psycopg[binary]` (or `psycopg2`)
+**Ubuntu and Debian**
+
+```bash
+sudo apt update
+sudo apt install python3-psycopg2
+```
+
+**Fedora**
+
+```bash
+sudo dnf install python3-psycopg2
+```
+
+If Nicotine+ does not use the system Python, install into that environment instead, for example:
+
+```bash
+pip install psycopg2-binary
+```
 
 ## Install
 

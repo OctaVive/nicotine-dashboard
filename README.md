@@ -32,13 +32,34 @@ docker compose up -d
 
 ## 3) Plugin dependencies
 
-Install dependencies in the Python environment Nicotine+ uses:
-
-- `psycopg[binary]` or `psycopg2` (required for PostgreSQL inserts)
-
-If PostgreSQL driver is missing, plugin logs will show:
+The plugin **requires a PostgreSQL driver** so it can insert rows into your database. Install **`psycopg2`** (or **`psycopg`** v3 with the binary extra) into the **same Python environment that runs Nicotine+**. If the driver is missing, the plugin logs:
 
 - `Install psycopg or psycopg2 to enable PostgreSQL writes`
+
+### Linux: distro packages (system Python)
+
+If Nicotine+ uses your distribution’s Python 3, install the packaged bindings:
+
+**Ubuntu and Debian**
+
+```bash
+sudo apt update
+sudo apt install python3-psycopg2
+```
+
+**Fedora**
+
+```bash
+sudo dnf install python3-psycopg2
+```
+
+### pip (venv, custom Python, or when the distro package does not match Nicotine’s Python)
+
+```bash
+pip install psycopg2-binary
+```
+
+(or `pip install 'psycopg[binary]'` for psycopg v3).
 
 ## 4) Upload/IP/Country flow
 
