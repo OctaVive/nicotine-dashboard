@@ -26,7 +26,7 @@ docker compose up -d
 2. Enable the plugin in Nicotine+.
 3. Configure plugin settings:
    - Required DB: `db_host`, `db_port`, `db_name`, `db_user`, `db_password`
-   - Optional: geo lookup URLs, timeouts, **worker retry/wait** settings (see `plugin/README.md`)
+   - Optional: geo lookup URLs, timeouts, worker retry/wait, and **periodic DB backfill** (`backfill_*`, see `plugin/README.md`)
 
 ## 3) Plugin dependencies
 
@@ -76,10 +76,11 @@ Tune `geoip_online_retry_count` / `geoip_online_retry_delay_seconds` for flaky n
 
 ### Optional: backfilling old rows
 
-Rows inserted before this behavior (or when APIs were down) may still have `country_code` NULL. There is no magic SQL to infer country without an external geo source. Typical options:
+**In-plugin:** enable `backfill_enabled` in plugin settings (see `plugin/README.md`). While Nicotine+ is running, a background thread periodically re-queries the geo APIs for rows that still have unknown country but a known `peer_ip`, and `UPDATE`s them.
 
-- Export `peer_ip` for NULL rows and run them through a geo tool or script, then `UPDATE download_events SET country_code = ..., country_name = ... WHERE id = ...`.
-- Or keep Grafana queries tolerant of NULLs (e.g. `COALESCE(country_code, 'UNK')`).
+**Manual:** export `peer_ip` for NULL rows and run them through a geo tool or script, then `UPDATE download_events SET country_code = ..., country_name = ... WHERE id = ...`.
+
+**Grafana:** keep queries tolerant of NULLs (e.g. `COALESCE(country_code, 'UNK')`) if you do not backfill.
 
 ## 5) Validate ingestion quickly
 

@@ -68,6 +68,10 @@ class Plugin(BasePlugin):
         "geoip_online_retry_count": 2,
         "geoip_online_retry_delay_seconds": 0.5,
         "unknown_country_name": "Unknown",
+        "backfill_enabled": False,
+        "backfill_interval_seconds": 3600,
+        "backfill_batch_limit": 50,
+        "backfill_sleep_seconds": 0.3,
     }
 
     metasettings = {
@@ -113,6 +117,29 @@ class Plugin(BasePlugin):
             "stepsize": 0.1,
         },
         "unknown_country_name": {"description": "Country name when unknown", "type": "str"},
+        "backfill_enabled": {
+            "description": "Periodically UPDATE rows with unknown country (Nicotine+ must stay open)",
+            "type": "bool",
+        },
+        "backfill_interval_seconds": {
+            "description": "Seconds between backfill batches",
+            "type": "int",
+            "minimum": 30,
+            "maximum": 86400,
+        },
+        "backfill_batch_limit": {
+            "description": "Max rows to process per backfill batch",
+            "type": "int",
+            "minimum": 1,
+            "maximum": 500,
+        },
+        "backfill_sleep_seconds": {
+            "description": "Pause between geo API calls during backfill",
+            "type": "float",
+            "minimum": 0,
+            "maximum": 60,
+            "stepsize": 0.1,
+        },
     }
 
     def init(self) -> None:
@@ -120,16 +147,25 @@ class Plugin(BasePlugin):
         self._stop_event = threading.Event()
         self._db_conn = None
         self._resolved_users: dict[str, dict[str, Any]] = {}
+        self._backfill_thread: Optional[threading.Thread] = None
         self._worker_thread = threading.Thread(
             target=self._worker_loop, name="nicotine-upload-geo-worker", daemon=True
         )
         self._worker_thread.start()
+        if self.settings.get("backfill_enabled"):
+            self._backfill_thread = threading.Thread(
+                target=self._backfill_loop, name="nicotine-upload-geo-backfill", daemon=True
+            )
+            self._backfill_thread.start()
+            self.log("Upload Geo backfill thread started")
         self.log("Upload Geo plugin initialized")
 
     def disable(self) -> None:
         self._stop_event.set()
         if hasattr(self, "_worker_thread") and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=3.0)
+        if self._backfill_thread is not None and self._backfill_thread.is_alive():
+            self._backfill_thread.join(timeout=5.0)
         self._close_db_connection()
         self.log("Upload Geo plugin stopped")
 
@@ -548,6 +584,104 @@ class Plugin(BasePlugin):
         except Exception:
             pass
         self._db_conn = None
+
+    def _open_new_db_connection(self) -> Any:
+        """Separate connection for backfill (do not share worker _db_conn)."""
+        if psycopg is not None:
+            return psycopg.connect(**self._db_kwargs())
+        if psycopg2 is not None:
+            return psycopg2.connect(**self._db_kwargs())
+        return None
+
+    def _backfill_loop(self) -> None:
+        interval = self._safe_int(self.settings.get("backfill_interval_seconds"))
+        if interval is None:
+            interval = 3600
+        interval = max(30, min(interval, 86400))
+        while not self._stop_event.is_set():
+            if self.settings.get("backfill_enabled"):
+                try:
+                    self._backfill_one_batch()
+                except Exception as exc:
+                    self.log(f"Backfill loop error: {exc}")
+            if self._stop_event.wait(timeout=interval):
+                break
+
+    def _backfill_one_batch(self) -> None:
+        if not self.settings.get("backfill_enabled"):
+            return
+        conn = self._open_new_db_connection()
+        if conn is None:
+            return
+        unknown = str(self.settings.get("unknown_country_name", "Unknown"))
+        limit = self._safe_int(self.settings.get("backfill_batch_limit")) or 50
+        limit = max(1, min(limit, 500))
+        sleep_sec = self._safe_float(self.settings.get("backfill_sleep_seconds"))
+        if sleep_sec is None:
+            sleep_sec = 0.3
+        sleep_sec = max(0.0, min(sleep_sec, 60.0))
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, host(peer_ip) AS ip
+                FROM download_events
+                WHERE peer_ip IS NOT NULL
+                  AND (
+                    country_code IS NULL
+                    OR LOWER(TRIM(COALESCE(country_name, ''))) = LOWER(TRIM(%s))
+                  )
+                ORDER BY occurred_at ASC
+                LIMIT %s
+                """,
+                (unknown, limit),
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+
+            updated = 0
+            for row in rows:
+                if self._stop_event.is_set():
+                    break
+                row_id, ip = row[0], row[1]
+                if not ip:
+                    continue
+                code, name = self._country_from_online_ip_with_retries(str(ip).strip())
+                if not code:
+                    if sleep_sec > 0:
+                        time.sleep(sleep_sec)
+                    continue
+                display_name = name if name else code
+                uc = conn.cursor()
+                try:
+                    uc.execute(
+                        """
+                        UPDATE download_events
+                        SET country_code = %s, country_name = %s
+                        WHERE id = %s
+                        """,
+                        (code, display_name, row_id),
+                    )
+                    conn.commit()
+                    updated += 1
+                finally:
+                    uc.close()
+                if sleep_sec > 0:
+                    time.sleep(sleep_sec)
+            if updated:
+                self.log(f"Backfill updated {updated} row(s)")
+        except Exception as exc:
+            self.log(f"Backfill batch error: {exc}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _lookup_user_attr(self, username: str, *attr_names: str) -> Optional[Any]:
         users = self._coalesce_attr(self.core, ("users",))

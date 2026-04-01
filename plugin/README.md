@@ -28,6 +28,18 @@ Configure in Nicotine+ plugin settings:
 - `geoip_online_retry_count`: Extra full lookup rounds after HTTP/API failure (default `2`, i.e. three attempts total with spacing).
 - `geoip_online_retry_delay_seconds`: Pause between those retries (default `0.5`)
 - `unknown_country_name`: Fallback display name for unknown country
+- `backfill_enabled`: If true, a **second background thread** periodically `UPDATE`s old rows where `peer_ip` is set but country is still unknown (`country_code` NULL or `country_name` matches `unknown_country_name`, case-insensitive). **Runs only while Nicotine+ is open.**
+- `backfill_interval_seconds`: Seconds between batches (default `3600`, min `30`)
+- `backfill_batch_limit`: Max rows per batch (default `50`, max `500`)
+- `backfill_sleep_seconds`: Delay between geo API calls within a batch (default `0.3`) to respect free API limits
+
+Enable `backfill_enabled` **before** loading the plugin (or disable/re-enable the plugin) so the backfill thread starts. Turning it on later may require a plugin reload depending on Nicotine+ behavior.
+
+## Periodic backfill
+
+Eligible rows: `peer_ip IS NOT NULL` and (`country_code IS NULL` OR trimmed lower `country_name` equals trimmed lower `unknown_country_name`). Oldest rows first (`ORDER BY occurred_at ASC`).
+
+Each row uses the same online lookup chain as uploads (`_country_from_online_ip_with_retries`: primary URL, backup URL, retries). Rows without a resolvable public IP stay unchanged.
 
 ## Country resolution logic
 
