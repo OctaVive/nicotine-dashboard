@@ -21,24 +21,21 @@ Configure in Nicotine+ plugin settings:
 - `db_user`: PostgreSQL username
 - `db_password`: PostgreSQL password
 - `db_sslmode`: PostgreSQL SSL mode (`prefer` by default)
-- `geoip_mmdb_path`: Optional path to `GeoLite2-Country.mmdb`
-- `geoip_online_url_template`: Optional online lookup URL (default `https://ipwho.is/{ip}`)
+- `geoip_online_url_template`: Online lookup URL (default `https://ipwho.is/{ip}`; must include `{ip}`)
 - `geoip_online_timeout_seconds`: Timeout for online lookup
 - `unknown_country_name`: Fallback display name for unknown country
 
 ## Country resolution logic
 
-1. Resolve country from peer IP using local GeoLite2 database when available.
-2. If GeoLite2 is unavailable or misses, resolve from optional online API.
-3. If both fail, fallback to Nicotine metadata when available.
-4. If still unavailable, store country as unknown.
+1. Resolve country from peer IP using the configured online HTTP API.
+2. If that fails or returns no country, fallback to Nicotine metadata when available.
+3. If still unavailable, store country as unknown.
 
 ## Dependencies
 
 Install Python packages in the environment Nicotine+ uses:
 
 - `psycopg[binary]` (or `psycopg2`)
-- `geoip2` (optional, only needed for local GeoLite2 lookup)
 
 ## Install
 

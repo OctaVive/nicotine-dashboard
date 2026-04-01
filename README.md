@@ -28,14 +28,13 @@ docker compose up -d
 2. Enable the plugin in Nicotine+.
 3. Configure plugin settings:
    - Required DB: `db_host`, `db_port`, `db_name`, `db_user`, `db_password`
-   - Optional geo: `geoip_mmdb_path`, `geoip_online_url_template`, `geoip_online_timeout_seconds`
+   - Optional geo: `geoip_online_url_template`, `geoip_online_timeout_seconds`
 
 ## 3) Plugin dependencies
 
 Install dependencies in the Python environment Nicotine+ uses:
 
 - `psycopg[binary]` or `psycopg2` (required for PostgreSQL inserts)
-- `geoip2` (optional, only for local GeoLite2 lookups)
 
 If PostgreSQL driver is missing, plugin logs will show:
 
@@ -48,15 +47,9 @@ The plugin uses:
 1. `upload_finished_notification(user, virtual_path, real_path)` to detect completed uploads
 2. `user_resolve_notification(user, ip_address, port, country)` to cache peer IP/country hints
 3. Country resolution priority:
-   - local GeoLite2 from peer IP
-   - online IP lookup API
+   - online IP lookup HTTP API (see `geoip_online_url_template`)
    - Nicotine metadata fallback
    - unknown
-
-To enable local GeoLite2 lookup:
-
-- Download MaxMind GeoLite2 Country database
-- Set plugin `geoip_mmdb_path` to the `.mmdb` file path
 
 Default online lookup endpoint:
 

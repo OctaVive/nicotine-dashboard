@@ -27,11 +27,6 @@ try:
 except Exception:  # pragma: no cover
     psycopg2 = None
 
-try:
-    import geoip2.database  # type: ignore
-except Exception:  # pragma: no cover
-    geoip2 = None
-
 
 class UploadEvent:
     def __init__(
@@ -63,7 +58,6 @@ class Plugin(BasePlugin):
         "db_user": "nicotine",
         "db_password": "nicotine",
         "db_sslmode": "prefer",
-        "geoip_mmdb_path": "",
         "geoip_online_url_template": "https://ipwho.is/{ip}",
         "geoip_online_timeout_seconds": 4,
         "unknown_country_name": "Unknown",
@@ -79,12 +73,8 @@ class Plugin(BasePlugin):
             "description": "PostgreSQL sslmode (disable/allow/prefer/require)",
             "type": "str",
         },
-        "geoip_mmdb_path": {
-            "description": "Optional GeoLite2-Country.mmdb file path",
-            "type": "str",
-        },
         "geoip_online_url_template": {
-            "description": "Optional online IP lookup URL template (use {ip})",
+            "description": "Online IP lookup URL template (use {ip})",
             "type": "str",
         },
         "geoip_online_timeout_seconds": {
@@ -98,12 +88,10 @@ class Plugin(BasePlugin):
         self._queue: "queue.Queue[UploadEvent]" = queue.Queue(maxsize=1000)
         self._stop_event = threading.Event()
         self._db_conn = None
-        self._geoip_reader = None
         self._resolved_users: dict[str, dict[str, Any]] = {}
         self._worker_thread = threading.Thread(
             target=self._worker_loop, name="nicotine-upload-geo-worker", daemon=True
         )
-        self._open_geoip_reader()
         self._worker_thread.start()
         self.log("Upload Geo plugin initialized")
 
@@ -112,7 +100,6 @@ class Plugin(BasePlugin):
         if hasattr(self, "_worker_thread") and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=3.0)
         self._close_db_connection()
-        self._close_geoip_reader()
         self.log("Upload Geo plugin stopped")
 
     def upload_finished_notification(self, *args: Any, **kwargs: Any) -> None:
@@ -221,11 +208,7 @@ class Plugin(BasePlugin):
         )
         nicotine_code = self._normalize_country_code(from_nicotine)
 
-        # Prefer GeoLite2 from IP whenever IP is available.
         if peer_ip:
-            code, name = self._country_from_geoip_ip(peer_ip)
-            if code:
-                return code, name
             code, name = self._country_from_online_ip(peer_ip)
             if code:
                 return code, name
@@ -236,14 +219,6 @@ class Plugin(BasePlugin):
         if nicotine_code:
             return nicotine_code, nicotine_code
         return None, self.settings.get("unknown_country_name", "Unknown")
-
-    def _country_name_from_geoip(
-        self, peer_ip: Optional[str], default_code: Optional[str]
-    ) -> Optional[str]:
-        if not peer_ip:
-            return default_code
-        _code, name = self._country_from_geoip_ip(peer_ip)
-        return name or default_code
 
     def _request_user_resolve(self, peer_username: str) -> None:
         users = self._coalesce_attr(self.core, ("users",))
@@ -288,19 +263,6 @@ class Plugin(BasePlugin):
             return text.upper()
         return None
 
-    def _country_from_geoip_ip(self, peer_ip: str) -> tuple[Optional[str], Optional[str]]:
-        if self._geoip_reader is None:
-            return None, None
-        try:
-            response = self._geoip_reader.country(peer_ip)
-            code = getattr(response.country, "iso_code", None)
-            name = getattr(response.country, "name", None)
-            if code:
-                code = str(code).upper()
-            return code, name
-        except Exception:
-            return None, None
-
     def _country_from_online_ip(self, peer_ip: str) -> tuple[Optional[str], Optional[str]]:
         template = str(self.settings.get("geoip_online_url_template", "")).strip()
         if not template:
@@ -326,28 +288,6 @@ class Plugin(BasePlugin):
         name = payload.get("country") or payload.get("country_name") or payload.get("countryName")
         normalized_code = self._normalize_country_code(code)
         return normalized_code, str(name) if name else None
-
-    def _open_geoip_reader(self) -> None:
-        mmdb_path = str(self.settings.get("geoip_mmdb_path", "")).strip()
-        if not mmdb_path or geoip2 is None:
-            self._geoip_reader = None
-            return
-        try:
-            self._geoip_reader = geoip2.database.Reader(mmdb_path)
-            self.log("GeoIP reader enabled")
-        except Exception as exc:
-            self._geoip_reader = None
-            self.log(f"Failed to open GeoIP database: {exc}")
-
-    def _close_geoip_reader(self) -> None:
-        reader = getattr(self, "_geoip_reader", None)
-        if reader is None:
-            return
-        try:
-            reader.close()
-        except Exception:
-            pass
-        self._geoip_reader = None
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
