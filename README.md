@@ -26,7 +26,7 @@ docker compose up -d
 2. Enable the plugin in Nicotine+.
 3. Configure plugin settings:
    - Required DB: `db_host`, `db_port`, `db_name`, `db_user`, `db_password`
-   - Optional: online country lookup URL template and HTTP timeout (see plugin docs)
+   - Optional: primary/backup online lookup URL templates and HTTP timeout (see `plugin/README.md`)
 
 ## 3) Plugin dependencies
 
@@ -66,11 +66,12 @@ The plugin uses:
 1. `upload_finished_notification(user, virtual_path, real_path)` to detect completed uploads
 2. `user_resolve_notification(user, ip_address, port, country)` to cache peer IP/country hints
 3. Country resolution priority:
-   - online HTTP lookup for the peer IP (configurable URL template)
+   - primary online HTTP lookup (`geoip_online_url_template`, default `https://ipwho.is/{ip}`)
+   - backup online lookup (`geoip_online_url_template_backup`, default ip-api.com over HTTP) if primary fails or returns no country
    - Nicotine metadata fallback
    - unknown
 
-The default lookup URL is `https://ipwho.is/{ip}` unless you change it in plugin settings.
+Clear the backup setting if you do not want a second HTTP request or non-HTTPS calls.
 
 ## 5) Validate ingestion quickly
 

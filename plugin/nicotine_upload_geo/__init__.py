@@ -60,6 +60,9 @@ class Plugin(BasePlugin):
         "db_password": "nicotine",
         "db_sslmode": "prefer",
         "geoip_online_url_template": "https://ipwho.is/{ip}",
+        "geoip_online_url_template_backup": (
+            "http://ip-api.com/json/{ip}?fields=status,message,country,countryCode"
+        ),
         "geoip_online_timeout_seconds": 4,
         "unknown_country_name": "Unknown",
     }
@@ -75,7 +78,11 @@ class Plugin(BasePlugin):
             "type": "str",
         },
         "geoip_online_url_template": {
-            "description": "Online IP lookup URL template (use {ip})",
+            "description": "Primary online IP lookup URL template (use {ip})",
+            "type": "str",
+        },
+        "geoip_online_url_template_backup": {
+            "description": "Backup online lookup if primary fails or returns no country (use {ip}; empty to disable)",
             "type": "str",
         },
         "geoip_online_timeout_seconds": {
@@ -304,14 +311,21 @@ class Plugin(BasePlugin):
         return None
 
     def _country_from_online_ip(self, peer_ip: str) -> tuple[Optional[str], Optional[str]]:
-        template = str(self.settings.get("geoip_online_url_template", "")).strip()
-        if not template:
-            return None, None
-
         timeout = self._safe_int(self.settings.get("geoip_online_timeout_seconds")) or 4
-        if "{ip}" not in template:
-            return None, None
+        primary = str(self.settings.get("geoip_online_url_template", "")).strip()
+        backup = str(self.settings.get("geoip_online_url_template_backup", "")).strip()
 
+        for template in (primary, backup):
+            if not template or "{ip}" not in template:
+                continue
+            result = self._country_from_online_template(peer_ip, template, timeout)
+            if result[0]:
+                return result
+        return None, None
+
+    def _country_from_online_template(
+        self, peer_ip: str, template: str, timeout: int
+    ) -> tuple[Optional[str], Optional[str]]:
         url = template.replace("{ip}", urllib.parse.quote(peer_ip, safe=""))
         try:
             with urllib.request.urlopen(url, timeout=max(timeout, 1)) as response:
@@ -319,15 +333,42 @@ class Plugin(BasePlugin):
         except (urllib.error.URLError, TimeoutError, ValueError, OSError):
             return None, None
 
+        return self._parse_online_geo_payload(payload)
+
+    def _parse_online_geo_payload(self, payload: Any) -> tuple[Optional[str], Optional[str]]:
+        if not isinstance(payload, dict):
+            return None, None
+
+        # ipwho.is style
+        if payload.get("success") is False:
+            return None, None
+
+        # ip-api.com style
+        if payload.get("status") == "fail":
+            return None, None
+
         code = (
             payload.get("country_code")
             or payload.get("countryCode")
-            or payload.get("country")
             or payload.get("country_iso_code")
+            or payload.get("country")
         )
-        name = payload.get("country") or payload.get("country_name") or payload.get("countryName")
-        normalized_code = self._normalize_country_code(code)
-        return normalized_code, str(name) if name else None
+        name = (
+            payload.get("country_name")
+            or payload.get("countryName")
+            or payload.get("country")
+        )
+
+        normalized = self._normalize_country_code(code)
+        if normalized:
+            return normalized, str(name) if name else None
+
+        # Some APIs return only a full country name; try normalizing that (usually fails for long names).
+        normalized = self._normalize_country_code(name)
+        if normalized:
+            return normalized, str(name) if name else None
+
+        return None, None
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():

@@ -21,15 +21,17 @@ Configure in Nicotine+ plugin settings:
 - `db_user`: PostgreSQL username
 - `db_password`: PostgreSQL password
 - `db_sslmode`: PostgreSQL SSL mode (`prefer` by default)
-- Online lookup URL template: default `https://ipwho.is/{ip}`; must include `{ip}` (peer address)
-- Online lookup timeout: seconds for the HTTP request
+- `geoip_online_url_template`: primary online lookup; default `https://ipwho.is/{ip}`; must include `{ip}`
+- `geoip_online_url_template_backup`: second provider if primary fails or returns no country; default ip-api.com (HTTP); clear to disable
+- `geoip_online_timeout_seconds`: HTTP timeout per request
 - `unknown_country_name`: Fallback display name for unknown country
 
 ## Country resolution logic
 
-1. Resolve country from peer IP using the configured online HTTP API.
-2. If that fails or returns no country, fallback to Nicotine metadata when available.
-3. If still unavailable, store country as unknown.
+1. Resolve country from peer IP using the primary online API (`geoip_online_url_template`).
+2. If the request fails, the API reports failure (e.g. ipwho `success: false`), or no ISO country code is returned, try the backup URL (`geoip_online_url_template_backup`).
+3. If both miss, fallback to Nicotine metadata when available.
+4. If still unavailable, store country as unknown.
 
 ## Dependencies
 
