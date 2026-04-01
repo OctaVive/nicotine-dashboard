@@ -1,4 +1,4 @@
-Version = "2026-04-01r01"
+Version = "2026-04-01r02"
 Authors = ["mitchel"]
 Name = "Nicotine Upload Geo"
 Description = "Logs completed uploads to PostgreSQL with IP and country for Grafana maps."

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -122,14 +123,14 @@ class Plugin(BasePlugin):
         }
 
     def _build_event_from_callback(self, *args: Any, **kwargs: Any) -> Optional[UploadEvent]:
+        # Nicotine+ 3.x: upload_finished_notification(user, virtual_path, real_path) — three strings.
+        # Do not treat the username string as a Transfer object.
         transfer = kwargs.get("transfer")
-        if transfer is None and args:
+        if transfer is None and args and not isinstance(args[0], str):
             transfer = args[0]
 
-        # Nicotine+ callback signature differs by version; support object + positional forms.
         positional_username = args[0] if args and isinstance(args[0], str) else None
         positional_path = args[1] if len(args) > 1 and isinstance(args[1], str) else None
-        positional_size = args[2] if len(args) > 2 else None
 
         peer_username = (
             self._coalesce_attr(transfer, ("username", "user"))
@@ -151,11 +152,22 @@ class Plugin(BasePlugin):
             or kwargs.get("filename")
             or positional_path
         )
-        bytes_transferred = self._safe_int(
-            self._coalesce_attr(transfer, ("size", "bytes", "transferred"))
-            or kwargs.get("size")
-            or positional_size
+        real_path = kwargs.get("real_path")
+        if real_path is None and len(args) > 2 and isinstance(args[2], str):
+            real_path = args[2]
+
+        size_candidate = self._coalesce_attr(
+            transfer, ("size", "bytes", "transferred", "transferred_bytes_total")
         )
+        if size_candidate is None:
+            size_candidate = kwargs.get("size")
+        bytes_transferred = self._safe_int(size_candidate)
+        if bytes_transferred is None and len(args) > 2 and isinstance(args[2], (int, float)):
+            bytes_transferred = self._safe_int(args[2])
+        if bytes_transferred is None:
+            bytes_transferred = self._upload_transfer_size(peer_username, file_path)
+        if bytes_transferred is None:
+            bytes_transferred = self._safe_file_size(real_path)
         peer_ip = self._extract_ip(peer_username, transfer=transfer, kwargs=kwargs)
         country_code, country_name = self._resolve_country(
             peer_username=peer_username, peer_ip=peer_ip, transfer=transfer, kwargs=kwargs
@@ -170,6 +182,34 @@ class Plugin(BasePlugin):
             file_path=file_path,
             bytes_transferred=bytes_transferred,
         )
+
+    def _upload_transfer_size(self, username: str, virtual_path: Optional[str]) -> Optional[int]:
+        if not virtual_path:
+            return None
+        uploads = self._coalesce_attr(self.core, ("uploads",))
+        if uploads is None:
+            return None
+        transfers = getattr(uploads, "transfers", None)
+        if not isinstance(transfers, dict):
+            return None
+        t = transfers.get(username + virtual_path)
+        if t is None:
+            return None
+        return self._safe_int(getattr(t, "size", None))
+
+    @staticmethod
+    def _safe_file_size(path: Any) -> Optional[int]:
+        if path is None:
+            return None
+        p = str(path).strip()
+        if not p:
+            return None
+        try:
+            if os.path.isfile(p):
+                return int(os.path.getsize(p))
+        except OSError:
+            return None
+        return None
 
     def _extract_ip(
         self, peer_username: str, transfer: Any = None, kwargs: Optional[dict[str, Any]] = None
