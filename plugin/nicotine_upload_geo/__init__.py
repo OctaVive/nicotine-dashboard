@@ -64,6 +64,9 @@ class Plugin(BasePlugin):
             "http://ip-api.com/json/{ip}?fields=status,message,country,countryCode"
         ),
         "geoip_online_timeout_seconds": 4,
+        "geoip_resolve_wait_seconds": 0.8,
+        "geoip_online_retry_count": 2,
+        "geoip_online_retry_delay_seconds": 0.5,
         "unknown_country_name": "Unknown",
     }
 
@@ -88,6 +91,26 @@ class Plugin(BasePlugin):
         "geoip_online_timeout_seconds": {
             "description": "Online IP lookup timeout in seconds",
             "type": "int",
+        },
+        "geoip_resolve_wait_seconds": {
+            "description": "Seconds to wait before a second IP/country pass (async user resolve race)",
+            "type": "float",
+            "minimum": 0,
+            "maximum": 10,
+            "stepsize": 0.1,
+        },
+        "geoip_online_retry_count": {
+            "description": "Extra online geo lookup attempts after failures (0 = single attempt)",
+            "type": "int",
+            "minimum": 0,
+            "maximum": 5,
+        },
+        "geoip_online_retry_delay_seconds": {
+            "description": "Delay between online geo retry attempts",
+            "type": "float",
+            "minimum": 0,
+            "maximum": 5,
+            "stepsize": 0.1,
         },
         "unknown_country_name": {"description": "Country name when unknown", "type": "str"},
     }
@@ -323,6 +346,26 @@ class Plugin(BasePlugin):
                 return result
         return None, None
 
+    def _country_from_online_ip_with_retries(self, peer_ip: str) -> tuple[Optional[str], Optional[str]]:
+        extra = self._safe_int(self.settings.get("geoip_online_retry_count"))
+        if extra is None:
+            extra = 2
+        extra = max(0, min(extra, 5))
+        attempts = 1 + extra
+        delay = self._safe_float(self.settings.get("geoip_online_retry_delay_seconds"))
+        if delay is None:
+            delay = 0.5
+        delay = max(0.0, min(delay, 5.0))
+
+        last: tuple[Optional[str], Optional[str]] = (None, None)
+        for i in range(attempts):
+            if i > 0 and delay > 0:
+                time.sleep(delay)
+            last = self._country_from_online_ip(peer_ip)
+            if last[0]:
+                return last
+        return last
+
     def _country_from_online_template(
         self, peer_ip: str, template: str, timeout: int
     ) -> tuple[Optional[str], Optional[str]]:
@@ -370,6 +413,49 @@ class Plugin(BasePlugin):
 
         return None, None
 
+    def _refresh_peer_ip(self, peer_username: str) -> Optional[str]:
+        return self._extract_ip(peer_username, transfer=None, kwargs=None)
+
+    def _nicotine_country_fallback(self, peer_username: str) -> Optional[str]:
+        cached = self._resolved_users.get(peer_username, {})
+        from_nicotine = cached.get("country_code") or self._lookup_user_attr(
+            peer_username, "country", "country_code"
+        )
+        code = self._normalize_country_code(from_nicotine)
+        if code:
+            return code
+        return None
+
+    def _enrich_event_before_insert(self, event: UploadEvent) -> None:
+        """Re-resolve IP/country in worker: fixes race where user_resolve arrives after upload_finished."""
+        unknown = self.settings.get("unknown_country_name", "Unknown")
+        wait_sec = self._safe_float(self.settings.get("geoip_resolve_wait_seconds"))
+        if wait_sec is None:
+            wait_sec = 0.8
+        wait_sec = max(0.0, min(wait_sec, 10.0))
+
+        def try_fill() -> None:
+            ip = self._refresh_peer_ip(event.peer_username)
+            if ip:
+                event.peer_ip = ip
+            if event.country_code is None and event.peer_ip:
+                code, name = self._country_from_online_ip_with_retries(event.peer_ip)
+                if code:
+                    event.country_code = code
+                    event.country_name = name if name else event.country_name
+            if event.country_code is None:
+                nc = self._nicotine_country_fallback(event.peer_username)
+                if nc:
+                    event.country_code = nc
+                    event.country_name = nc
+            if event.country_code is None:
+                event.country_name = unknown
+
+        try_fill()
+        if (event.peer_ip is None or event.country_code is None) and wait_sec > 0:
+            time.sleep(wait_sec)
+            try_fill()
+
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
@@ -377,6 +463,7 @@ class Plugin(BasePlugin):
             except queue.Empty:
                 continue
 
+            self._enrich_event_before_insert(event)
             self._persist_with_retry(event)
             self._queue.task_done()
 
@@ -490,6 +577,15 @@ class Plugin(BasePlugin):
             return None
         try:
             return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(value)
         except (TypeError, ValueError):
             return None
 

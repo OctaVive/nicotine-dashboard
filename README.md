@@ -26,7 +26,7 @@ docker compose up -d
 2. Enable the plugin in Nicotine+.
 3. Configure plugin settings:
    - Required DB: `db_host`, `db_port`, `db_name`, `db_user`, `db_password`
-   - Optional: primary/backup online lookup URL templates and HTTP timeout (see `plugin/README.md`)
+   - Optional: geo lookup URLs, timeouts, **worker retry/wait** settings (see `plugin/README.md`)
 
 ## 3) Plugin dependencies
 
@@ -65,13 +65,21 @@ The plugin uses:
 
 1. `upload_finished_notification(user, virtual_path, real_path)` to detect completed uploads
 2. `user_resolve_notification(user, ip_address, port, country)` to cache peer IP/country hints
-3. Country resolution priority:
+3. **Before each `INSERT`**, a background worker re-reads IP/country, retries online APIs, and optionally waits (`geoip_resolve_wait_seconds`) so late resolve callbacks are not missed.
+4. Country resolution priority (each pass):
    - primary online HTTP lookup (`geoip_online_url_template`, default `https://ipwho.is/{ip}`)
    - backup online lookup (`geoip_online_url_template_backup`, default ip-api.com over HTTP) if primary fails or returns no country
    - Nicotine metadata fallback
    - unknown
 
-Clear the backup setting if you do not want a second HTTP request or non-HTTPS calls.
+Tune `geoip_online_retry_count` / `geoip_online_retry_delay_seconds` for flaky networks. Clear the backup setting if you do not want a second HTTP request or non-HTTPS calls.
+
+### Optional: backfilling old rows
+
+Rows inserted before this behavior (or when APIs were down) may still have `country_code` NULL. There is no magic SQL to infer country without an external geo source. Typical options:
+
+- Export `peer_ip` for NULL rows and run them through a geo tool or script, then `UPDATE download_events SET country_code = ..., country_name = ... WHERE id = ...`.
+- Or keep Grafana queries tolerant of NULLs (e.g. `COALESCE(country_code, 'UNK')`).
 
 ## 5) Validate ingestion quickly
 

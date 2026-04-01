@@ -24,14 +24,28 @@ Configure in Nicotine+ plugin settings:
 - `geoip_online_url_template`: primary online lookup; default `https://ipwho.is/{ip}`; must include `{ip}`
 - `geoip_online_url_template_backup`: second provider if primary fails or returns no country; default ip-api.com (HTTP); clear to disable
 - `geoip_online_timeout_seconds`: HTTP timeout per request
+- `geoip_resolve_wait_seconds`: Seconds to wait before a second pass (default `0.8`). Nicotine+ often delivers `user_resolve_notification` **after** `upload_finished_notification`; the worker uses this delay so the peer IP can land in cache before lookup.
+- `geoip_online_retry_count`: Extra full lookup rounds after HTTP/API failure (default `2`, i.e. three attempts total with spacing).
+- `geoip_online_retry_delay_seconds`: Pause between those retries (default `0.5`)
 - `unknown_country_name`: Fallback display name for unknown country
 
 ## Country resolution logic
 
-1. Resolve country from peer IP using the primary online API (`geoip_online_url_template`).
-2. If the request fails, the API reports failure (e.g. ipwho `success: false`), or no ISO country code is returned, try the backup URL (`geoip_online_url_template_backup`).
-3. If both miss, fallback to Nicotine metadata when available.
-4. If still unavailable, store country as unknown.
+When an upload finishes, the plugin queues an event. **Before each database insert**, a background worker:
+
+1. Refreshes `peer_ip` from the resolve cache and `core.users` (same sources as at notify time).
+2. Runs online geo lookup (primary URL, then backup) with configurable retries.
+3. Falls back to Nicotine country metadata from cache / user object if still missing.
+4. If `peer_ip` or `country_code` is still missing after step 1–3, waits `geoip_resolve_wait_seconds` and repeats steps 1–3 once.
+
+This reduces NULL `country_code` / “Unknown” rows caused by timing, not by bad data.
+
+Resolution order within each pass:
+
+1. Primary online API (`geoip_online_url_template`).
+2. Backup URL (`geoip_online_url_template_backup`) if primary fails or returns no ISO code.
+3. Nicotine metadata when available.
+4. Unknown (`unknown_country_name`) if nothing else works.
 
 ## Dependencies
 
