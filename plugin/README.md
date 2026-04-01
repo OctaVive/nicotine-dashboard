@@ -21,8 +21,8 @@ Configure in Nicotine+ plugin settings:
 - `db_user`: PostgreSQL username
 - `db_password`: PostgreSQL password
 - `db_sslmode`: PostgreSQL SSL mode (`prefer` by default)
-- `geoip_online_url_template`: Online lookup URL (default `https://ipwho.is/{ip}`; must include `{ip}`)
-- `geoip_online_timeout_seconds`: Timeout for online lookup
+- Online lookup URL template: default `https://ipwho.is/{ip}`; must include `{ip}` (peer address)
+- Online lookup timeout: seconds for the HTTP request
 - `unknown_country_name`: Fallback display name for unknown country
 
 ## Country resolution logic
