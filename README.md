@@ -79,8 +79,23 @@ docker compose exec postgres psql -U nicotine -d nicotine -c "SELECT COUNT(*) FR
 docker compose exec postgres psql -U nicotine -d nicotine -c "SELECT occurred_at, peer_username, peer_ip, country_code, country_name FROM download_events ORDER BY occurred_at DESC LIMIT 20;"
 ```
 
+## `download_events` columns
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `BIGSERIAL` | Primary key |
+| `occurred_at` | `TIMESTAMPTZ` | When the upload finished (UTC) |
+| `peer_username` | `TEXT` | Remote user |
+| `peer_ip` | `INET` | Peer address |
+| `country_code` | `TEXT` | ISO country code when known |
+| `country_name` | `TEXT` | Country name when known |
+| `file_path` | `TEXT` | Shared file path |
+| `bytes_transferred` | `BIGINT` | Size in bytes |
+| `transfer_direction` | `TEXT` | Always `upload_from_me` for this plugin |
+
+Defined in `postgres/init/001_schema.sql`. The table is append-only.
+
 ## Notes
 
-- Event table is append-only (`download_events`).
 - Direction is fixed as `upload_from_me`.
 - Store size and file path for drill-down reporting.
